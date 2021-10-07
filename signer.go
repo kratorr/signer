@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 	//"time"
 )
 
@@ -86,13 +85,13 @@ func runMultihash(data interface{}, out chan interface{}) {
 }
 
 func MultiHash(in, out chan interface{}) {
-	start := time.Now()
+	//start := time.Now()
 	wgOut := &sync.WaitGroup{}
 	for data := range in {
 		wgOut.Add(1)
 		fmt.Println("********************************************************", data)
-		var res string
-		go func() {
+
+		go func(data interface{}) {
 			wg := &sync.WaitGroup{}
 			var thResults = map[int]string{}
 			mu := &sync.Mutex{}
@@ -109,9 +108,9 @@ func MultiHash(in, out chan interface{}) {
 					fmt.Println(data, "MultiHash: crc32(th+step1))", th, iterCrc32)
 				}(i)
 			}
-
+			//fmt.Println("before wait")
 			wg.Wait()
-
+			//fmt.Println("after wait")
 			var joinedString string
 			for i := 0; i < 6; i++ {
 				joinedString += thResults[i]
@@ -119,15 +118,14 @@ func MultiHash(in, out chan interface{}) {
 
 			out <- joinedString
 			wgOut.Done()
-		}()
+		}(data)
+		fmt.Println("VNESHKA")
 
-		wgOut.Wait()
-		end := time.Since(start)
-		fmt.Println(end, "???????????????????????????end")
-		fmt.Println(data, "MultiHash result", res)
+		//fmt.Println(data, "MultiHash result", res)
 
-		//out <- res
 	}
+	wgOut.Wait()
+
 }
 
 func _MultiHash(in, out chan interface{}) {
@@ -153,9 +151,9 @@ func _MultiHash(in, out chan interface{}) {
 func CombineResults(in, out chan interface{}) {
 
 	result := []string{}
-	for x := range in {
-		str := fmt.Sprintf("%v", x)
-		time.Sleep(time.Second)
+	for data := range in {
+		fmt.Println("combine get data", data)
+		str := fmt.Sprintf("%v", data)
 		result = append(result, str)
 	}
 	sort.Strings(result)
@@ -177,7 +175,7 @@ func main() {
 				out <- fibNum
 			}
 		}),
-		//job(SingleHash),
+		job(SingleHash),
 		job(MultiHash),
 		job(CombineResults),
 		job(func(in, out chan interface{}) {
