@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	//"time"
+	"time"
 )
 
 func ExecutePipeline(jobs ...job) {
@@ -18,7 +18,7 @@ func ExecutePipeline(jobs ...job) {
 		in = out
 	}
 	wg.Wait()
-	//	fmt.Println(<-in)
+
 }
 
 func work(wg *sync.WaitGroup, function job, in, out chan interface{}) {
@@ -27,69 +27,68 @@ func work(wg *sync.WaitGroup, function job, in, out chan interface{}) {
 	function(in, out)
 }
 
-func runCrc32(dataStr string, crc32res chan string) {
-	var res string
-	go func() {
-		DataSignerCrc32(dataStr)
-	}()
-	crc32res <- res
-}
-
 func SingleHash(in, out chan interface{}) {
+
+	// 	* DataSignerMd5 может одновременно вызываться только 1 раз, считается 10 мс.
+	// Если одновременно запустится несколько - будет перегрев на 1 сек
+	// * DataSignerCrc32, считается 1 сек
+	//  DataSignerCrc32(data)+"~"+DataSignerCrc32(DataSignerMd5(data))
+	// crc32(data)+"~"+crc32(md5(data))
+	mu := sync.Mutex{}
+	wg := sync.WaitGroup{}
 	for data := range in {
-		fmt.Println(data)
-		data_str := fmt.Sprintf("%d", data)
-		fmt.Println(data_str, " SingleHash data ", data_str)
-		res := "test"
-
-		md5 := DataSignerMd5(data_str) //1 раз 10 мс
-
-		crc32md5 := DataSignerCrc32(md5)
-		crc32 := DataSignerCrc32(data_str)
-		fmt.Println(data_str, "SingleHash crc32(md5(data))", crc32md5)
-		fmt.Println(data_str, "SingleHash crc32(data)", crc32)
-
-		res = crc32 + "~" + crc32md5
-		fmt.Println(data_str, "0 SingleHash result", res)
-		out <- res
-	}
-}
-
-func runMultihash(data interface{}, out chan interface{}) {
-
-	wg := &sync.WaitGroup{}
-	var thResults = map[int]string{}
-	mu := &sync.Mutex{}
-	for i := 0; i < 6; i++ {
 		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			th := fmt.Sprintf("%d", i)
-			data_str := fmt.Sprintf("%s", data)
-			iterCrc32 := DataSignerCrc32(th + data_str)
+		go func(data interface{}) {
+			data_str := fmt.Sprintf("%d", data)
+			fmt.Println(data_str, " SingleHash data ", data_str)
+			time.Sleep(time.Millisecond * 10)
 			mu.Lock()
-			thResults[i] = iterCrc32
+			md5 := DataSignerMd5(data_str) //считаем что тут ок, типа 10 мс считаем и спим до и после.
 			mu.Unlock()
-			fmt.Println(data, "MultiHash: crc32(th+step1))", th, iterCrc32)
-			//res += iterCrc32 СЮДА НАДО СКЛАДЫВАТЬ!
-		}(i)
-	}
+			time.Sleep(time.Millisecond * 10)
+			chanResStr := make(chan string)
+			chanResMd := make(chan string)
 
+			go func(data_str string) {
+				crc32 := DataSignerCrc32(data_str)
+				chanResStr <- crc32
+			}(data_str)
+
+			go func(md5 string) {
+				crc32Md5 := DataSignerCrc32(md5)
+				chanResMd <- crc32Md5
+			}(md5)
+
+			var crc32FromChan, crc32md5FromChan string
+			go func() {
+				for i := 0; i < 2; i++ {
+					select {
+					case mdRes := <-chanResMd:
+
+						crc32md5FromChan = mdRes
+					case crc32Res := <-chanResStr:
+
+						crc32FromChan = crc32Res
+					}
+				}
+				fmt.Println(data_str, "SingleHash crc32(md5(data))", crc32FromChan)
+				fmt.Println(data_str, "SingleHash crc32(data)", crc32md5FromChan)
+				res := crc32FromChan + "~" + crc32md5FromChan
+				fmt.Println(data_str, "0 SingleHash result", res)
+				out <- res
+				wg.Done()
+			}()
+
+		}(data)
+
+	}
 	wg.Wait()
-	var joinedString string
-	for i := 0; i < 6; i++ {
-		joinedString += thResults[i]
-	}
-
-	out <- joinedString
 }
 
 func MultiHash(in, out chan interface{}) {
-	//start := time.Now()
 	wgOut := &sync.WaitGroup{}
 	for data := range in {
 		wgOut.Add(1)
-		fmt.Println("********************************************************", data)
 
 		go func(data interface{}) {
 			wg := &sync.WaitGroup{}
@@ -108,9 +107,9 @@ func MultiHash(in, out chan interface{}) {
 					fmt.Println(data, "MultiHash: crc32(th+step1))", th, iterCrc32)
 				}(i)
 			}
-			//fmt.Println("before wait")
+
 			wg.Wait()
-			//fmt.Println("after wait")
+
 			var joinedString string
 			for i := 0; i < 6; i++ {
 				joinedString += thResults[i]
@@ -119,47 +118,24 @@ func MultiHash(in, out chan interface{}) {
 			out <- joinedString
 			wgOut.Done()
 		}(data)
-		fmt.Println("VNESHKA")
-
-		//fmt.Println(data, "MultiHash result", res)
 
 	}
 	wgOut.Wait()
 
 }
 
-func _MultiHash(in, out chan interface{}) {
-
-	for data := range in {
-		var res string
-		for i := 0; i < 6; i++ {
-
-			th := fmt.Sprintf("%d", i)
-			data_str := fmt.Sprintf("%s", data)
-
-			iterCrc32 := DataSignerCrc32(th + data_str)
-			fmt.Println(data, "MultiHash: crc32(th+step1))", th, iterCrc32)
-			res += iterCrc32
-
-		}
-		fmt.Println(data, "MultiHash result", res)
-
-		out <- res
-	}
-}
-
 func CombineResults(in, out chan interface{}) {
 
 	result := []string{}
 	for data := range in {
-		fmt.Println("combine get data", data)
+
 		str := fmt.Sprintf("%v", data)
 		result = append(result, str)
 	}
 	sort.Strings(result)
 
 	joined_string := strings.Join(result, "_")
-	fmt.Println(joined_string, "FINAL")
+
 	out <- joined_string
 
 }
@@ -167,7 +143,6 @@ func CombineResults(in, out chan interface{}) {
 func main() {
 	testResult := "empty"
 	//inputData := []int{0, 1, 1, 2, 3, 5, 8}
-	//inputData := []int{0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 11, 1, 11, 1, 1, 11, 1, 1, 1}
 	inputData := []int{0, 1}
 	hashSignJobs := []job{
 		job(func(in, out chan interface{}) {
